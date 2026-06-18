@@ -1,0 +1,140 @@
+:root {
+  --bg: #1e1e24;
+  --panel: #2a2a33;
+  --panel-2: #33333d;
+  --border: #44444f;
+  --text: #e6e6ea;
+  --muted: #9a9aa6;
+  --accent: #5b8cff;
+  --accent-2: #ff9f5b;
+  --white-key: #f4f4f6;
+  --black-key: #2b2b30;
+  --note: #5b8cff;
+  --note-selected: #ff9f5b;
+  --playhead: #ff5b6e;
+
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:hover {
+  border-color: var(--accent);
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+select,
+input[type="number"] {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.app {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.app-header p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+.panel h2 {
+  margin: 0 0 10px;
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.toolbar .group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.toolbar label,
+.toolbar .label {
+  font-size: 13px;
+  color: var(--muted);
+}
+.spacer {
+  flex: 1;
+}
+
+/* ピアノロール */
+.piano-roll-wrap {
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+}
+
+/* 鍵盤 */
+.keyboard {
+  position: relative;
+  height: 110px;
+  user-select: none;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* 譜面 */
+.notation {
+  background: #fff;
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.notation svg {
+  display: block;
+}
