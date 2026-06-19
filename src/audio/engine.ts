@@ -76,3 +76,8 @@ function getClick(): Tone.MembraneSynth {
 export function playClick(time: number, accent: boolean): void {
   getClick().triggerAttackRelease(accent ? "C3" : "C2", "32n", time, accent ? 1 : 0.55);
 }
+
+/** 即時に 1 回クリックを鳴らす（カウントダウン表示などトランスポート外で使用）。 */
+export function clickNow(accent = false): void {
+  getClick().triggerAttackRelease(accent ? "C3" : "C2", "16n", undefined, accent ? 1 : 0.7);
+}

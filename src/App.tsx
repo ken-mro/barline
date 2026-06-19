@@ -5,10 +5,12 @@ import { StepInput } from "./components/StepInput";
 import { Transport } from "./components/Transport";
 import { RecorderContext } from "./hooks/recorderContext";
 import { useRecorder } from "./hooks/useRecorder";
+import { useEditorStore } from "./store/editorStore";
 
 export function App() {
   // 録音インスタンスはアプリ全体で 1 つだけ生成し、Transport と Keyboard で共有する。
   const recorder = useRecorder();
+  const countdown = useEditorStore((s) => s.countdown);
 
   return (
     <RecorderContext.Provider value={recorder}>
@@ -24,6 +26,12 @@ export function App() {
         <Keyboard />
         <NotationView />
       </div>
+
+      {countdown !== null && (
+        <div className="countdown-overlay" aria-live="assertive">
+          <span>{countdown}</span>
+        </div>
+      )}
     </RecorderContext.Provider>
   );
 }
