@@ -1,6 +1,11 @@
 import { Accidental, Dot, Formatter, Renderer, Stave, StaveNote, Voice } from "vexflow";
 import type { Song } from "../types/song";
-import { type NotationMeasure, measureBeats, quantizeTrackToMeasures } from "../utils/quantize";
+import {
+  DEFAULT_GRID,
+  type NotationMeasure,
+  measureBeats,
+  quantizeTrackToMeasures,
+} from "../utils/quantize";
 
 /**
  * Song を量子化して VexFlow で五線譜描画する（表示専用）。
@@ -42,19 +47,21 @@ function toStaveNote(el: NotationMeasure["elements"][number]): StaveNote {
  * @param song 対象楽曲
  * @param trackId 描画するトラック（省略時は先頭）
  * @param width 描画幅(px)
+ * @param grid 量子化単位（拍）
  */
 export function renderNotation(
   container: HTMLDivElement,
   song: Song,
   trackId?: string,
   width = 800,
+  grid: number = DEFAULT_GRID,
 ): void {
   container.innerHTML = "";
 
   const track = song.tracks.find((t) => t.id === trackId) ?? song.tracks[0];
   if (!track) return;
 
-  const measures = quantizeTrackToMeasures(track.notes, song.timeSignature);
+  const measures = quantizeTrackToMeasures(track.notes, song.timeSignature, grid);
   const perRow = Math.max(1, Math.floor((width - LEFT_PADDING) / STAVE_WIDTH));
   const rows = Math.ceil(measures.length / perRow);
 

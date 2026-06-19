@@ -1,29 +1,35 @@
 import * as Tone from "tone";
 import type { Song } from "../types/song";
 import { ensureStarted, getSynth, midiToFrequency } from "./engine";
+import { acquire, beatsToSeconds, hardStop, startRaf } from "./transport";
 
 /**
  * Song を Tone.Transport 上にスケジューリングして再生する。
  *
- * 時間はすべて拍（四分音符 = 1）で保持しているため、Transport の
- * "Xi" 表記（i = 拍 index ではなく秒換算）ではなく、テンポから秒へ
- * 変換した絶対秒でスケジュールする。
+ * 時間はすべて拍（四分音符 = 1）で保持しているため、テンポから秒へ変換した
+ * 絶対秒でスケジュールする。トランスポートは録音と共有のため transport.ts の
+ * コーディネータ経由で扱う。
  */
 
-let scheduledIds: number[] = [];
-let positionRaf: number | null = null;
-
-/** 拍数 → 秒（指定 BPM）。 */
-function beatsToSeconds(beats: number, bpm: number): number {
-  return (beats / bpm) * 60;
-}
-
-/** 現在スケジュールされているイベントをすべて解除する。 */
-function clearSchedule(): void {
-  for (const id of scheduledIds) {
-    Tone.getTransport().clear(id);
+/**
+ * 既存ノートをトランスポートにスケジュールし、末尾の秒位置を返す。
+ * @param offsetSec 全ノートをずらす秒数（録音のカウントイン用）
+ */
+export function scheduleSongNotes(song: Song, offsetSec = 0): number {
+  const transport = Tone.getTransport();
+  const synth = getSynth();
+  let lastEndSec = 0;
+  for (const track of song.tracks) {
+    for (const note of track.notes) {
+      const startSec = beatsToSeconds(note.start, song.tempo) + offsetSec;
+      const durSec = Math.max(0.01, beatsToSeconds(note.duration, song.tempo));
+      lastEndSec = Math.max(lastEndSec, startSec + durSec);
+      transport.schedule((time) => {
+        synth.triggerAttackRelease(midiToFrequency(note.pitch), durSec, time, note.velocity / 127);
+      }, startSec);
+    }
   }
-  scheduledIds = [];
+  return lastEndSec;
 }
 
 export interface PlaybackHandle {
@@ -42,41 +48,24 @@ export async function play(
   onEnd?: () => void,
 ): Promise<PlaybackHandle> {
   await ensureStarted();
-  stop();
+  hardStop();
+  acquire("playback");
 
   const transport = Tone.getTransport();
-  const synth = getSynth();
   transport.bpm.value = song.tempo;
 
-  let lastEndSec = 0;
-  for (const track of song.tracks) {
-    for (const note of track.notes) {
-      const startSec = beatsToSeconds(note.start, song.tempo);
-      const durSec = Math.max(0.01, beatsToSeconds(note.duration, song.tempo));
-      lastEndSec = Math.max(lastEndSec, startSec + durSec);
-      const id = transport.schedule((time) => {
-        synth.triggerAttackRelease(midiToFrequency(note.pitch), durSec, time, note.velocity / 127);
-      }, startSec);
-      scheduledIds.push(id);
-    }
-  }
+  const lastEndSec = scheduleSongNotes(song);
 
   // 末尾で自動停止。
-  const endId = transport.schedule(() => {
+  transport.schedule(() => {
     stop();
     onEnd?.();
   }, lastEndSec + 0.1);
-  scheduledIds.push(endId);
 
   transport.start();
 
-  // 再生位置をアニメーションフレームで通知。
   if (onPosition) {
-    const tick = () => {
-      onPosition((transport.seconds * song.tempo) / 60);
-      positionRaf = requestAnimationFrame(tick);
-    };
-    positionRaf = requestAnimationFrame(tick);
+    startRaf(() => onPosition((transport.seconds * song.tempo) / 60));
   }
 
   return { stop };
@@ -84,12 +73,5 @@ export async function play(
 
 /** 再生を停止し、Transport を先頭へ戻す。 */
 export function stop(): void {
-  const transport = Tone.getTransport();
-  transport.stop();
-  transport.position = 0;
-  clearSchedule();
-  if (positionRaf !== null) {
-    cancelAnimationFrame(positionRaf);
-    positionRaf = null;
-  }
+  hardStop();
 }

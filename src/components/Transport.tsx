@@ -1,7 +1,9 @@
 import { type ChangeEvent, useRef } from "react";
+import { useRecorderContext } from "../hooks/recorderContext";
 import { usePlayback } from "../hooks/usePlayback";
 import { downloadSongAsMidi } from "../midi/export";
 import { loadMidiFile } from "../midi/import";
+import { useEditorStore } from "../store/editorStore";
 import { useSongStore } from "../store/songStore";
 import type { TimeSignature } from "../types/song";
 
@@ -13,12 +15,22 @@ const TIME_SIGNATURES: TimeSignature[] = [
 ];
 
 export function Transport() {
-  const { isPlaying, toggle } = usePlayback();
+  const { isPlaying, toggle, halt } = usePlayback();
+  const recorder = useRecorderContext();
   const song = useSongStore((s) => s.song);
   const setTempo = useSongStore((s) => s.setTempo);
   const setTimeSignature = useSongStore((s) => s.setTimeSignature);
   const clearNotes = useSongStore((s) => s.clearNotes);
   const loadSong = useSongStore((s) => s.loadSong);
+
+  const isRecording = useEditorStore((s) => s.isRecording);
+  const metronome = useEditorStore((s) => s.metronome);
+  const setMetronome = useEditorStore((s) => s.setMetronome);
+  const countIn = useEditorStore((s) => s.countIn);
+  const setCountIn = useEditorStore((s) => s.setCountIn);
+  const overdub = useEditorStore((s) => s.overdub);
+  const setOverdub = useEditorStore((s) => s.setOverdub);
+
   const fileInput = useRef<HTMLInputElement>(null);
 
   const onTempo = (e: ChangeEvent<HTMLInputElement>) => {
@@ -29,6 +41,20 @@ export function Transport() {
   const onTimeSig = (e: ChangeEvent<HTMLSelectElement>) => {
     const [n, d] = e.target.value.split("/").map(Number);
     setTimeSignature([n, d]);
+  };
+
+  const onPlay = () => {
+    if (isRecording) recorder.halt();
+    toggle();
+  };
+
+  const onRecord = () => {
+    if (isRecording) {
+      recorder.halt();
+    } else {
+      if (isPlaying) halt();
+      void recorder.start();
+    }
   };
 
   const onImport = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -45,8 +71,11 @@ export function Transport() {
 
   return (
     <div className="panel toolbar" aria-label="トランスポート">
-      <button type="button" className="primary" onClick={toggle}>
+      <button type="button" className="primary" onClick={onPlay} disabled={isRecording}>
         {isPlaying ? "■ 停止" : "▶ 再生"}
+      </button>
+      <button type="button" className={isRecording ? "active recording" : ""} onClick={onRecord}>
+        {isRecording ? "■ 録音停止" : "● 録音"}
       </button>
 
       <div className="group">
@@ -76,6 +105,25 @@ export function Transport() {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="group">
+        <label>
+          <input
+            type="checkbox"
+            checked={metronome}
+            onChange={(e) => setMetronome(e.target.checked)}
+          />{" "}
+          メトロノーム
+        </label>
+        <label>
+          <input type="checkbox" checked={countIn} onChange={(e) => setCountIn(e.target.checked)} />{" "}
+          カウントイン
+        </label>
+        <label>
+          <input type="checkbox" checked={overdub} onChange={(e) => setOverdub(e.target.checked)} />{" "}
+          重ね録り
+        </label>
       </div>
 
       <div className="spacer" />
