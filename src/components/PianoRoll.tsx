@@ -7,18 +7,19 @@ import { measureBeats } from "../utils/quantize";
 
 /**
  * SVG ベースのピアノロール編集。
- * - 空白クリック: 現在の音価でノート追加
- * - ノートをドラッグ: 移動（音高・位置）
- * - ノート右端をドラッグ: 長さ変更
+ * - ツール = pen: 空白クリックで現在の音価のノート追加
+ * - ツール = select: 空白は不活性（スクロール優先）。誤入力を防ぐ。
+ * - ノートをドラッグ: 移動（音高・位置）／右端ハンドルで長さ変更（両ツール共通）
  * - ノート選択中に Delete/Backspace: 削除
+ * - 録音中: 録音カーソルとライブノートを表示し、カーソルを追従スクロール
  */
 
-const ROW_HEIGHT = 16;
+const ROW_HEIGHT = 18;
 const BEAT_WIDTH = 40;
 const PITCH_MAX = 84; // C6
 const PITCH_MIN = 48; // C3
 const MIN_BEATS = 16;
-const RESIZE_HANDLE = 6;
+const RESIZE_HANDLE = 8;
 
 type DragMode = "move" | "resize";
 interface DragState {
@@ -58,8 +59,14 @@ export function PianoRoll() {
   const selectNote = useEditorStore((s) => s.selectNote);
   const playheadBeats = useEditorStore((s) => s.playheadBeats);
   const setStepCursor = useEditorStore((s) => s.setStepCursor);
+  const tool = useEditorStore((s) => s.tool);
+  const setTool = useEditorStore((s) => s.setTool);
+  const isRecording = useEditorStore((s) => s.isRecording);
+  const recordHeadBeats = useEditorStore((s) => s.recordHeadBeats);
+  const liveNotes = useEditorStore((s) => s.liveNotes);
 
   const svgRef = useRef<SVGSVGElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
 
   const track = song.tracks.find((t) => t.id === selectedTrackId) ?? song.tracks[0];
@@ -67,14 +74,21 @@ export function PianoRoll() {
 
   const mBeats = measureBeats(song.timeSignature);
   const contentEnd = notes.reduce((m, n) => Math.max(m, n.start + n.duration), 0);
-  const totalBeats = Math.max(MIN_BEATS, Math.ceil(contentEnd / mBeats) * mBeats + mBeats);
+  const totalBeats = Math.max(
+    MIN_BEATS,
+    Math.ceil(Math.max(contentEnd, recordHeadBeats) / mBeats) * mBeats + mBeats,
+  );
   const pitchRows = PITCH_MAX - PITCH_MIN;
 
   const width = totalBeats * BEAT_WIDTH;
   const height = pitchRows * ROW_HEIGHT;
 
-  // 背景クリックでノート追加。
+  // 背景クリックでノート追加（pen ツール時のみ）。
   const onBackgroundPointerDown = (e: ReactPointerEvent<SVGRectElement>) => {
+    if (tool !== "pen") {
+      selectNote(null);
+      return;
+    }
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
     const start = snapTo(xToBeat(x), grid);
     const pitch = yToPitch(y);
@@ -85,12 +99,11 @@ export function PianoRoll() {
     void ensureStarted().then(() => previewNote(pitch));
   };
 
-  const onNotePointerDown = (e: ReactPointerEvent<SVGRectElement>, note: Note) => {
+  const beginDrag = (e: ReactPointerEvent<SVGRectElement>, note: Note, mode: DragMode) => {
     e.stopPropagation();
     selectNote(note.id);
+    e.currentTarget.setPointerCapture(e.pointerId);
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
-    const noteRight = (note.start + note.duration) * BEAT_WIDTH;
-    const mode: DragMode = noteRight - x <= RESIZE_HANDLE ? "resize" : "move";
     drag.current = {
       mode,
       noteId: note.id,
@@ -146,7 +159,41 @@ export function PianoRoll() {
     return () => window.removeEventListener("keydown", onKey);
   }, [selectedNoteId, removeNote, selectNote]);
 
-  // 小節の縦線。
+  // 録音/再生中、カーソルが見えるよう水平オートスクロール。
+  useEffect(() => {
+    const head = isRecording ? recordHeadBeats : playheadBeats;
+    if (!isRecording && head === 0) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const x = head * BEAT_WIDTH;
+    const margin = 80;
+    if (x > wrap.scrollLeft + wrap.clientWidth - margin) {
+      wrap.scrollLeft = x - wrap.clientWidth + margin;
+    } else if (x < wrap.scrollLeft + margin) {
+      wrap.scrollLeft = Math.max(0, x - margin);
+    }
+  }, [recordHeadBeats, playheadBeats, isRecording]);
+
+  // 補助線（細かいグリッド）。grid を変えると本数が変わる。
+  const subLines = [];
+  if (grid < 1) {
+    for (let b = 0; b <= totalBeats + 1e-9; b += grid) {
+      if (Math.abs(b - Math.round(b)) < 1e-6) continue; // 拍線は別途描画
+      subLines.push(
+        <line
+          key={`sub-${b}`}
+          x1={b * BEAT_WIDTH}
+          y1={0}
+          x2={b * BEAT_WIDTH}
+          y2={height}
+          stroke="#2c2c34"
+          strokeWidth={1}
+        />,
+      );
+    }
+  }
+
+  // 拍線・小節線。
   const measureLines = [];
   for (let b = 0; b <= totalBeats; b += 1) {
     const isMeasure = Math.abs(b % mBeats) < 1e-6;
@@ -157,7 +204,7 @@ export function PianoRoll() {
         y1={0}
         x2={b * BEAT_WIDTH}
         y2={height}
-        stroke={isMeasure ? "#55555f" : "#3a3a44"}
+        stroke={isMeasure ? "#5b5b66" : "#3a3a44"}
         strokeWidth={isMeasure ? 1.5 : 1}
       />,
     );
@@ -181,8 +228,28 @@ export function PianoRoll() {
 
   return (
     <div className="panel">
-      <h2>ピアノロール</h2>
-      <div className="piano-roll-wrap" style={{ maxHeight: 360 }}>
+      <div className="panel-head">
+        <h2>ピアノロール</h2>
+        <div className="group">
+          <button
+            type="button"
+            className={tool === "select" ? "active" : ""}
+            onClick={() => setTool("select")}
+            title="選択・移動・スクロール（誤入力なし）"
+          >
+            ✋ 選択
+          </button>
+          <button
+            type="button"
+            className={tool === "pen" ? "active" : ""}
+            onClick={() => setTool("pen")}
+            title="クリックでノート入力"
+          >
+            ✏ ペン
+          </button>
+        </div>
+      </div>
+      <div className="piano-roll-wrap" ref={wrapRef} style={{ maxHeight: 360 }}>
         <svg
           ref={svgRef}
           width={width}
@@ -192,29 +259,65 @@ export function PianoRoll() {
           aria-label="ピアノロール編集領域"
         >
           {rows}
+          {subLines}
+          {/* 背景: pen 時のみノート追加。select 時は touch-action:auto でスクロールを許可。 */}
           <rect
             x={0}
             y={0}
             width={width}
             height={height}
             fill="transparent"
+            style={{ touchAction: tool === "pen" ? "none" : "auto" }}
             onPointerDown={onBackgroundPointerDown}
           />
           {measureLines}
-          {notes.map((note) => (
-            <rect
-              key={note.id}
-              x={note.start * BEAT_WIDTH}
-              y={pitchToY(note.pitch)}
-              width={Math.max(2, note.duration * BEAT_WIDTH - 1)}
-              height={ROW_HEIGHT - 1}
-              rx={3}
-              fill={note.id === selectedNoteId ? "var(--note-selected)" : "var(--note)"}
-              stroke="#1118"
-              style={{ cursor: "pointer" }}
-              onPointerDown={(e) => onNotePointerDown(e, note)}
-            />
-          ))}
+          {notes.map((note) => {
+            const x = note.start * BEAT_WIDTH;
+            const w = Math.max(2, note.duration * BEAT_WIDTH - 1);
+            const y = pitchToY(note.pitch);
+            const selected = note.id === selectedNoteId;
+            return (
+              <g key={note.id}>
+                <rect
+                  x={x}
+                  y={y}
+                  width={w}
+                  height={ROW_HEIGHT - 1}
+                  rx={3}
+                  fill={selected ? "var(--note-selected)" : "var(--note)"}
+                  stroke="#1118"
+                  style={{ cursor: "move", touchAction: "none" }}
+                  onPointerDown={(e) => beginDrag(e, note, "move")}
+                />
+                {/* 右端のリサイズハンドル（長さ変更）。 */}
+                <rect
+                  x={x + w - RESIZE_HANDLE}
+                  y={y}
+                  width={RESIZE_HANDLE}
+                  height={ROW_HEIGHT - 1}
+                  fill="transparent"
+                  style={{ cursor: "ew-resize", touchAction: "none" }}
+                  onPointerDown={(e) => beginDrag(e, note, "resize")}
+                />
+              </g>
+            );
+          })}
+          {/* 録音中のライブノート（押下中。録音ヘッドまで伸びる）。 */}
+          {isRecording &&
+            liveNotes.map((ln) => (
+              <rect
+                key={`live-${ln.pitch}`}
+                x={ln.startBeat * BEAT_WIDTH}
+                y={pitchToY(ln.pitch)}
+                width={Math.max(2, (recordHeadBeats - ln.startBeat) * BEAT_WIDTH)}
+                height={ROW_HEIGHT - 1}
+                rx={3}
+                fill="var(--record)"
+                opacity={0.7}
+                pointerEvents="none"
+              />
+            ))}
+          {/* 再生ヘッド。 */}
           <line
             x1={playheadBeats * BEAT_WIDTH}
             y1={0}
@@ -224,6 +327,18 @@ export function PianoRoll() {
             strokeWidth={2}
             pointerEvents="none"
           />
+          {/* 録音ヘッド。 */}
+          {isRecording && (
+            <line
+              x1={recordHeadBeats * BEAT_WIDTH}
+              y1={0}
+              x2={recordHeadBeats * BEAT_WIDTH}
+              y2={height}
+              stroke="var(--record)"
+              strokeWidth={2}
+              pointerEvents="none"
+            />
+          )}
         </svg>
       </div>
     </div>

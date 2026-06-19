@@ -73,4 +73,14 @@ describe("quantizeTrackToMeasures", () => {
     expect(lastOfFirst?.type).toBe("note");
     expect(measures[1].elements[0].type).toBe("note");
   });
+
+  it("grid を変えると量子化結果が変わる", () => {
+    const n = [note(60, 0.25, 1)];
+    // 粗いグリッド(1拍)では 0.25 → 0 にスナップし、先頭からノート。
+    const coarse = quantizeTrackToMeasures(n, [4, 4], 1);
+    expect(coarse[0].elements[0].type).toBe("note");
+    // 細かいグリッド(1/16)では 0.25 のまま、先頭に休符が入る。
+    const fine = quantizeTrackToMeasures(n, [4, 4], 0.25);
+    expect(fine[0].elements[0].type).toBe("rest");
+  });
 });

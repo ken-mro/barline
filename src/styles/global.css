@@ -12,6 +12,7 @@
   --note: #5b8cff;
   --note-selected: #ff9f5b;
   --playhead: #ff5b6e;
+  --record: #ff3b3b;
 
   font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif;
   color-scheme: dark;
@@ -48,6 +49,17 @@ button.active {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
+}
+button.recording {
+  background: var(--record);
+  border-color: var(--record);
+  color: #fff;
+  animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.6;
+  }
 }
 
 select,
@@ -90,6 +102,16 @@ input[type="number"] {
   font-size: 14px;
   color: var(--muted);
   font-weight: 600;
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.panel-head h2 {
+  margin: 0;
 }
 
 .toolbar {
