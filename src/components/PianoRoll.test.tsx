@@ -6,7 +6,7 @@ import { PianoRoll } from "./PianoRoll";
 
 // PianoRoll の座標定数（コンポーネントと一致させる）。
 const BEAT_WIDTH = 40;
-const ROW_HEIGHT = 18;
+const ROW_HEIGHT = 22;
 const PITCH_MAX = 84;
 const pitchToY = (p: number) => (PITCH_MAX - 1 - p) * ROW_HEIGHT;
 
