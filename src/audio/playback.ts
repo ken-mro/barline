@@ -1,7 +1,7 @@
 import * as Tone from "tone";
 import type { Song } from "../types/song";
 import { ensureStarted, getSynth, midiToFrequency } from "./engine";
-import { acquire, beatsToSeconds, hardStop, startRaf } from "./transport";
+import { acquire, beatsToSeconds, getOwner, hardStop, startRaf } from "./transport";
 
 /**
  * Song を Tone.Transport 上にスケジューリングして再生する。
@@ -56,8 +56,10 @@ export async function play(
 
   const lastEndSec = scheduleSongNotes(song);
 
-  // 末尾で自動停止。
+  // 末尾で自動停止。録音など別セッションが所有権を取得済みなら何もしない
+  // （前回再生の残存イベントが新セッションを止めてしまうのを防ぐ）。
   transport.schedule(() => {
+    if (getOwner() !== "playback") return;
     stop();
     onEnd?.();
   }, lastEndSec + 0.1);

@@ -1,4 +1,10 @@
-import { type PointerEvent as ReactPointerEvent, useEffect, useRef } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ensureStarted, previewNote } from "../audio/engine";
 import { useEditorStore } from "../store/editorStore";
 import { useSongStore } from "../store/songStore";
@@ -9,9 +15,12 @@ import { measureBeats } from "../utils/quantize";
  * SVG ベースのピアノロール編集。
  * - ツール = pen: 空白クリックで現在の音価のノート追加
  * - ツール = select: 空白は不活性（スクロール優先）。誤入力を防ぐ。
- * - ノートをドラッグ: 移動（音高・位置）／右端ハンドルで長さ変更（両ツール共通）
+ * - ノート中央をドラッグ: 移動（音高・位置）
+ * - ノート左端/右端をドラッグ: 長さ変更（両端対応）
  * - ノート選択中に Delete/Backspace: 削除
- * - 録音中: 録音カーソルとライブノートを表示し、カーソルを追従スクロール
+ *
+ * スムーズさのため、ドラッグ中はローカルのプレビュー状態のみ更新し（ソング
+ * ストアは書き換えない＝譜面の再描画が走らない）、確定時に 1 度だけ commit する。
  */
 
 const ROW_HEIGHT = 18;
@@ -21,15 +30,25 @@ const PITCH_MIN = 48; // C3
 const MIN_BEATS = 16;
 const RESIZE_HANDLE = 8;
 
-type DragMode = "move" | "resize";
+type DragMode = "move" | "resize-left" | "resize-right";
+
 interface DragState {
   mode: DragMode;
+  pointerId: number;
   noteId: string;
   startPointerBeat: number;
   startPointerPitch: number;
   origStart: number;
   origPitch: number;
   origDuration: number;
+}
+
+/** ドラッグ中のプレビュー値。 */
+interface DragPreview {
+  noteId: string;
+  start: number;
+  duration: number;
+  pitch: number;
 }
 
 function snapTo(value: number, grid: number): number {
@@ -40,6 +59,7 @@ function snapTo(value: number, grid: number): number {
 const xToBeat = (x: number) => x / BEAT_WIDTH;
 const yToPitch = (y: number) => PITCH_MAX - 1 - Math.floor(y / ROW_HEIGHT);
 const pitchToY = (pitch: number) => (PITCH_MAX - 1 - pitch) * ROW_HEIGHT;
+const clampPitch = (p: number) => Math.min(PITCH_MAX - 1, Math.max(PITCH_MIN, p));
 
 function clientToLocal(svg: SVGSVGElement | null, clientX: number, clientY: number) {
   const rect = svg?.getBoundingClientRect();
@@ -68,6 +88,7 @@ export function PianoRoll() {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
+  const [preview, setPreview] = useState<DragPreview | null>(null);
 
   const track = song.tracks.find((t) => t.id === selectedTrackId) ?? song.tracks[0];
   const notes = track?.notes ?? [];
@@ -101,11 +122,14 @@ export function PianoRoll() {
 
   const beginDrag = (e: ReactPointerEvent<SVGRectElement>, note: Note, mode: DragMode) => {
     e.stopPropagation();
+    // 既にドラッグ中なら 2 本目のポインタは無視（マルチタッチで掴みが奪われるのを防ぐ）。
+    if (drag.current) return;
     selectNote(note.id);
     e.currentTarget.setPointerCapture(e.pointerId);
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
     drag.current = {
       mode,
+      pointerId: e.pointerId,
       noteId: note.id,
       startPointerBeat: xToBeat(x),
       startPointerPitch: yToPitch(y),
@@ -113,29 +137,66 @@ export function PianoRoll() {
       origPitch: note.pitch,
       origDuration: note.duration,
     };
+    setPreview({
+      noteId: note.id,
+      start: note.start,
+      duration: note.duration,
+      pitch: note.pitch,
+    });
   };
 
-  // ドラッグ中の移動/リサイズは window で追跡する。
+  // ドラッグ中はプレビューのみ更新（ストアは触らない）。確定は pointerup。
   useEffect(() => {
-    const onMove = (e: PointerEvent) => {
+    const computePreview = (e: PointerEvent): DragPreview | null => {
       const d = drag.current;
-      if (!d) return;
+      if (!d) return null;
       const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
+      const deltaBeat = xToBeat(x) - d.startPointerBeat;
+      const origEnd = d.origStart + d.origDuration;
       if (d.mode === "move") {
-        const deltaBeat = xToBeat(x) - d.startPointerBeat;
         const deltaPitch = yToPitch(y) - d.startPointerPitch;
-        updateNote(d.noteId, {
+        return {
+          noteId: d.noteId,
           start: snapTo(d.origStart + deltaBeat, grid),
-          pitch: Math.min(PITCH_MAX - 1, Math.max(PITCH_MIN, d.origPitch + deltaPitch)),
-        });
-      } else {
-        const deltaBeat = xToBeat(x) - d.startPointerBeat;
-        updateNote(d.noteId, {
-          duration: Math.max(grid, snapTo(d.origDuration + deltaBeat, grid)),
-        });
+          duration: d.origDuration,
+          pitch: clampPitch(d.origPitch + deltaPitch),
+        };
       }
+      if (d.mode === "resize-right") {
+        return {
+          noteId: d.noteId,
+          start: d.origStart,
+          duration: Math.max(grid, snapTo(d.origDuration + deltaBeat, grid)),
+          pitch: d.origPitch,
+        };
+      }
+      // resize-left: 右端を固定して開始位置と長さを変える。
+      // 先にクランプしてからスナップすることで、右端が非グリッド（録音/取込ノート）でも
+      // 開始位置はグリッドに整列する。
+      const rawStart = Math.min(d.origStart + deltaBeat, origEnd - grid);
+      const newStart = snapTo(rawStart, grid);
+      return {
+        noteId: d.noteId,
+        start: newStart,
+        duration: Math.max(grid, origEnd - newStart),
+        pitch: d.origPitch,
+      };
     };
-    const onUp = () => {
+
+    const onMove = (e: PointerEvent) => {
+      if (!drag.current || e.pointerId !== drag.current.pointerId) return;
+      const next = computePreview(e);
+      if (next) setPreview(next);
+    };
+    const onUp = (e: PointerEvent) => {
+      const d = drag.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      setPreview((p) => {
+        if (p) {
+          updateNote(d.noteId, { start: p.start, duration: p.duration, pitch: p.pitch });
+        }
+        return null;
+      });
       drag.current = null;
     };
     window.addEventListener("pointermove", onMove);
@@ -174,57 +235,70 @@ export function PianoRoll() {
     }
   }, [recordHeadBeats, playheadBeats, isRecording]);
 
-  // 補助線（細かいグリッド）。grid を変えると本数が変わる。
-  const subLines = [];
-  if (grid < 1) {
-    for (let b = 0; b <= totalBeats + 1e-9; b += grid) {
-      if (Math.abs(b - Math.round(b)) < 1e-6) continue; // 拍線は別途描画
-      subLines.push(
+  // 静的レイヤー（行・補助線・拍線）はドラッグ中に変わらないので memo 化する。
+  const rows = useMemo(() => {
+    const out = [];
+    for (let p = PITCH_MIN; p < PITCH_MAX; p++) {
+      const isBlack = [1, 3, 6, 8, 10].includes(((p % 12) + 12) % 12);
+      out.push(
+        <rect
+          key={`row-${p}`}
+          x={0}
+          y={pitchToY(p)}
+          width={width}
+          height={ROW_HEIGHT}
+          fill={isBlack ? "#00000022" : "transparent"}
+        />,
+      );
+    }
+    return out;
+  }, [width]);
+
+  const subLines = useMemo(() => {
+    const out = [];
+    if (grid < 1) {
+      for (let b = 0; b <= totalBeats + 1e-9; b += grid) {
+        if (Math.abs(b - Math.round(b)) < 1e-6) continue; // 拍線は別途描画
+        out.push(
+          <line
+            key={`sub-${b}`}
+            x1={b * BEAT_WIDTH}
+            y1={0}
+            x2={b * BEAT_WIDTH}
+            y2={height}
+            stroke="#2c2c34"
+            strokeWidth={1}
+          />,
+        );
+      }
+    }
+    return out;
+  }, [grid, totalBeats, height]);
+
+  const measureLines = useMemo(() => {
+    const out = [];
+    for (let b = 0; b <= totalBeats; b += 1) {
+      const isMeasure = Math.abs(b % mBeats) < 1e-6;
+      out.push(
         <line
-          key={`sub-${b}`}
+          key={`v-${b}`}
           x1={b * BEAT_WIDTH}
           y1={0}
           x2={b * BEAT_WIDTH}
           y2={height}
-          stroke="#2c2c34"
-          strokeWidth={1}
+          stroke={isMeasure ? "#5b5b66" : "#3a3a44"}
+          strokeWidth={isMeasure ? 1.5 : 1}
         />,
       );
     }
-  }
+    return out;
+  }, [totalBeats, mBeats, height]);
 
-  // 拍線・小節線。
-  const measureLines = [];
-  for (let b = 0; b <= totalBeats; b += 1) {
-    const isMeasure = Math.abs(b % mBeats) < 1e-6;
-    measureLines.push(
-      <line
-        key={`v-${b}`}
-        x1={b * BEAT_WIDTH}
-        y1={0}
-        x2={b * BEAT_WIDTH}
-        y2={height}
-        stroke={isMeasure ? "#5b5b66" : "#3a3a44"}
-        strokeWidth={isMeasure ? 1.5 : 1}
-      />,
-    );
-  }
-
-  // 行（黒鍵の行を薄く塗る）。
-  const rows = [];
-  for (let p = PITCH_MIN; p < PITCH_MAX; p++) {
-    const isBlack = [1, 3, 6, 8, 10].includes(((p % 12) + 12) % 12);
-    rows.push(
-      <rect
-        key={`row-${p}`}
-        x={0}
-        y={pitchToY(p)}
-        width={width}
-        height={ROW_HEIGHT}
-        fill={isBlack ? "#00000022" : "transparent"}
-      />,
-    );
-  }
+  // ドラッグ中はプレビュー値で描画する。
+  const effective = (note: Note) =>
+    preview && preview.noteId === note.id
+      ? { start: preview.start, duration: preview.duration, pitch: preview.pitch }
+      : note;
 
   return (
     <div className="panel">
@@ -272,10 +346,13 @@ export function PianoRoll() {
           />
           {measureLines}
           {notes.map((note) => {
-            const x = note.start * BEAT_WIDTH;
-            const w = Math.max(2, note.duration * BEAT_WIDTH - 1);
-            const y = pitchToY(note.pitch);
+            const e = effective(note);
+            const x = e.start * BEAT_WIDTH;
+            const w = Math.max(2, e.duration * BEAT_WIDTH - 1);
+            const y = pitchToY(e.pitch);
             const selected = note.id === selectedNoteId;
+            // 短いノートでは左右ハンドルが重ならないよう幅を調整。
+            const handleW = Math.min(RESIZE_HANDLE, w / 3);
             return (
               <g key={note.id}>
                 <rect
@@ -287,17 +364,27 @@ export function PianoRoll() {
                   fill={selected ? "var(--note-selected)" : "var(--note)"}
                   stroke="#1118"
                   style={{ cursor: "move", touchAction: "none" }}
-                  onPointerDown={(e) => beginDrag(e, note, "move")}
+                  onPointerDown={(ev) => beginDrag(ev, note, "move")}
                 />
-                {/* 右端のリサイズハンドル（長さ変更）。 */}
+                {/* 左端ハンドル（開始位置＝長さ変更）。 */}
                 <rect
-                  x={x + w - RESIZE_HANDLE}
+                  x={x}
                   y={y}
-                  width={RESIZE_HANDLE}
+                  width={handleW}
                   height={ROW_HEIGHT - 1}
                   fill="transparent"
                   style={{ cursor: "ew-resize", touchAction: "none" }}
-                  onPointerDown={(e) => beginDrag(e, note, "resize")}
+                  onPointerDown={(ev) => beginDrag(ev, note, "resize-left")}
+                />
+                {/* 右端ハンドル（長さ変更）。 */}
+                <rect
+                  x={x + w - handleW}
+                  y={y}
+                  width={handleW}
+                  height={ROW_HEIGHT - 1}
+                  fill="transparent"
+                  style={{ cursor: "ew-resize", touchAction: "none" }}
+                  onPointerDown={(ev) => beginDrag(ev, note, "resize-right")}
                 />
               </g>
             );

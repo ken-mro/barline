@@ -42,7 +42,11 @@ export function useRecorder(): RecorderApi {
     });
 
     handleRef.current = handle;
-    useEditorStore.getState().setIsRecording(true);
+    // トランスポートが他で使用中などで開始できなかった場合は録音状態にしない
+    // （isRecording だけ true になって操作不能になるのを防ぐ）。
+    if (handle) {
+      useEditorStore.getState().setIsRecording(true);
+    }
   }, []);
 
   const halt = useCallback(() => {
