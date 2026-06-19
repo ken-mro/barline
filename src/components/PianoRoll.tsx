@@ -88,7 +88,14 @@ export function PianoRoll() {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
+  const previewRef = useRef<DragPreview | null>(null);
   const [preview, setPreview] = useState<DragPreview | null>(null);
+
+  // プレビューは ref と state の両方に持つ（ref は commit 時に参照、state は描画用）。
+  const applyPreview = (p: DragPreview | null) => {
+    previewRef.current = p;
+    setPreview(p);
+  };
 
   const track = song.tracks.find((t) => t.id === selectedTrackId) ?? song.tracks[0];
   const notes = track?.notes ?? [];
@@ -125,7 +132,13 @@ export function PianoRoll() {
     // 既にドラッグ中なら 2 本目のポインタは無視（マルチタッチで掴みが奪われるのを防ぐ）。
     if (drag.current) return;
     selectNote(note.id);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // ポインタキャプチャは「あれば便利」程度。失敗してもドラッグ自体は
+    // window のリスナーで成立するため、例外でドラッグが始まらない事故を防ぐ。
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // 無視
+    }
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
     drag.current = {
       mode,
@@ -137,7 +150,7 @@ export function PianoRoll() {
       origPitch: note.pitch,
       origDuration: note.duration,
     };
-    setPreview({
+    applyPreview({
       noteId: note.id,
       start: note.start,
       duration: note.duration,
@@ -186,18 +199,22 @@ export function PianoRoll() {
     const onMove = (e: PointerEvent) => {
       if (!drag.current || e.pointerId !== drag.current.pointerId) return;
       const next = computePreview(e);
-      if (next) setPreview(next);
+      if (next) {
+        previewRef.current = next;
+        setPreview(next);
+      }
     };
     const onUp = (e: PointerEvent) => {
       const d = drag.current;
       if (!d || e.pointerId !== d.pointerId) return;
-      setPreview((p) => {
-        if (p) {
-          updateNote(d.noteId, { start: p.start, duration: p.duration, pitch: p.pitch });
-        }
-        return null;
-      });
+      // commit は state updater の外で行う（副作用を updater に入れない）。
+      const p = previewRef.current;
+      if (p) {
+        updateNote(d.noteId, { start: p.start, duration: p.duration, pitch: p.pitch });
+      }
       drag.current = null;
+      previewRef.current = null;
+      setPreview(null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -356,6 +373,8 @@ export function PianoRoll() {
             return (
               <g key={note.id}>
                 <rect
+                  data-note-handle="move"
+                  data-note-id={note.id}
                   x={x}
                   y={y}
                   width={w}
@@ -368,6 +387,8 @@ export function PianoRoll() {
                 />
                 {/* 左端ハンドル（開始位置＝長さ変更）。 */}
                 <rect
+                  data-note-handle="left"
+                  data-note-id={note.id}
                   x={x}
                   y={y}
                   width={handleW}
@@ -378,6 +399,8 @@ export function PianoRoll() {
                 />
                 {/* 右端ハンドル（長さ変更）。 */}
                 <rect
+                  data-note-handle="right"
+                  data-note-id={note.id}
                   x={x + w - handleW}
                   y={y}
                   width={handleW}
