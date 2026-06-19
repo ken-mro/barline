@@ -119,6 +119,39 @@ input[type="number"] {
   color: var(--muted);
 }
 
+/* 録音前のカウントダウン全画面表示 */
+.countdown-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 1000;
+  pointer-events: none;
+}
+.countdown-overlay span {
+  font-size: 30vmin;
+  font-weight: 700;
+  color: #fff;
+  text-shadow: 0 0 24px var(--record);
+  animation: countpop 1s ease-out infinite;
+}
+@keyframes countpop {
+  0% {
+    transform: scale(0.7);
+    opacity: 0.4;
+  }
+  40% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.05);
+    opacity: 0.85;
+  }
+}
+
 .toolbar {
   display: flex;
   flex-wrap: wrap;

@@ -39,6 +39,8 @@ interface EditorState {
 
   // --- 録音 ---
   isRecording: boolean;
+  /** 録音前のカウントダウン表示（3→2→1）。null で非表示。 */
+  countdown: number | null;
   /** 録音ヘッド位置（拍。カウントイン中は負）。 */
   recordHeadBeats: number;
   /** 録音中に押下中のノート。 */
@@ -60,6 +62,7 @@ interface EditorState {
   setTool: (t: Tool) => void;
   setKeyWidth: (w: number) => void;
   setIsRecording: (v: boolean) => void;
+  setCountdown: (v: number | null) => void;
   setRecordHeadBeats: (b: number) => void;
   setLiveNotes: (n: LiveNote[]) => void;
   setMetronome: (v: boolean) => void;
@@ -77,6 +80,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   tool: "select",
   keyWidth: 34,
   isRecording: false,
+  countdown: null,
   recordHeadBeats: 0,
   liveNotes: [],
   metronome: true,
@@ -92,6 +96,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setTool: (t) => set({ tool: t }),
   setKeyWidth: (w) => set({ keyWidth: Math.max(20, Math.min(60, w)) }),
   setIsRecording: (v) => set({ isRecording: v }),
+  setCountdown: (v) => set({ countdown: v }),
   setRecordHeadBeats: (b) => set({ recordHeadBeats: b }),
   setLiveNotes: (n) => set({ liveNotes: n }),
   setMetronome: (v) => set({ metronome: v }),

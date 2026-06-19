@@ -80,7 +80,7 @@ export function Keyboard() {
   const totalWidth = whiteKeys.length * whiteWidth;
 
   return (
-    <div className="panel">
+    <div className="panel" id="barline-keyboard">
       <div className="panel-head">
         <h2>鍵盤{isRecording ? "（録音中：押すと記録）" : "（クリックでステップ入力）"}</h2>
         <div className="group">

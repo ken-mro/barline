@@ -24,6 +24,7 @@ export function Transport() {
   const loadSong = useSongStore((s) => s.loadSong);
 
   const isRecording = useEditorStore((s) => s.isRecording);
+  const countdown = useEditorStore((s) => s.countdown);
   const metronome = useEditorStore((s) => s.metronome);
   const setMetronome = useEditorStore((s) => s.setMetronome);
   const countIn = useEditorStore((s) => s.countIn);
@@ -43,13 +44,16 @@ export function Transport() {
     setTimeSignature([n, d]);
   };
 
+  // 録音中・カウントダウン中は「録音アクティブ」として扱う。
+  const recordingActive = isRecording || countdown !== null;
+
   const onPlay = () => {
-    if (isRecording) recorder.halt();
+    if (recordingActive) recorder.halt();
     toggle();
   };
 
   const onRecord = () => {
-    if (isRecording) {
+    if (recordingActive) {
       recorder.halt();
     } else {
       if (isPlaying) halt();
@@ -71,11 +75,15 @@ export function Transport() {
 
   return (
     <div className="panel toolbar" aria-label="トランスポート">
-      <button type="button" className="primary" onClick={onPlay} disabled={isRecording}>
+      <button type="button" className="primary" onClick={onPlay} disabled={recordingActive}>
         {isPlaying ? "■ 停止" : "▶ 再生"}
       </button>
-      <button type="button" className={isRecording ? "active recording" : ""} onClick={onRecord}>
-        {isRecording ? "■ 録音停止" : "● 録音"}
+      <button
+        type="button"
+        className={recordingActive ? "active recording" : ""}
+        onClick={onRecord}
+      >
+        {recordingActive ? "■ 録音停止" : "● 録音"}
       </button>
 
       <div className="group">
@@ -118,7 +126,7 @@ export function Transport() {
         </label>
         <label>
           <input type="checkbox" checked={countIn} onChange={(e) => setCountIn(e.target.checked)} />{" "}
-          カウントイン
+          カウントダウン
         </label>
         <label>
           <input type="checkbox" checked={overdub} onChange={(e) => setOverdub(e.target.checked)} />{" "}

@@ -352,6 +352,27 @@ export function PianoRoll() {
     return out;
   }, [totalBeats, mBeats, height]);
 
+  // シ(B)–ド(C) 間の横線（オクターブの区切り）。C の行の下端に引く。
+  const octaveLines = useMemo(() => {
+    const out = [];
+    for (let p = PITCH_MIN; p <= PITCH_MAX; p++) {
+      if (((p % 12) + 12) % 12 !== 0) continue; // C のみ
+      const yLine = pitchToY(p) + ROW_HEIGHT;
+      out.push(
+        <line
+          key={`oct-${p}`}
+          x1={0}
+          y1={yLine}
+          x2={width}
+          y2={yLine}
+          stroke="#8a8a98"
+          strokeWidth={1.5}
+        />,
+      );
+    }
+    return out;
+  }, [width]);
+
   // ドラッグ中はプレビュー値で描画する。
   const effective = (note: Note) =>
     preview && preview.noteId === note.id
@@ -410,6 +431,7 @@ export function PianoRoll() {
             onPointerDown={onBackgroundPointerDown}
           />
           {measureLines}
+          {octaveLines}
           {notes.map((note) => {
             const e = effective(note);
             const x = e.start * BEAT_WIDTH;
