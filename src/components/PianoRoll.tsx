@@ -23,12 +23,13 @@ import { measureBeats } from "../utils/quantize";
  * ストアは書き換えない＝譜面の再描画が走らない）、確定時に 1 度だけ commit する。
  */
 
-const ROW_HEIGHT = 18;
+const ROW_HEIGHT = 22;
 const BEAT_WIDTH = 40;
 const PITCH_MAX = 84; // C6
 const PITCH_MIN = 48; // C3
 const MIN_BEATS = 16;
-const RESIZE_HANDLE = 8;
+// リサイズ用の当たり判定幅（タッチでも掴みやすいよう広め）。
+const TOUCH_HANDLE = 14;
 
 type DragMode = "move" | "resize-left" | "resize-right";
 
@@ -88,7 +89,22 @@ export function PianoRoll() {
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const drag = useRef<DragState | null>(null);
+  const previewRef = useRef<DragPreview | null>(null);
+  // 選択モードで空白をドラッグしたときのパン（自前スクロール）状態。
+  const pan = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    startLeft: number;
+    startTop: number;
+  } | null>(null);
   const [preview, setPreview] = useState<DragPreview | null>(null);
+
+  // プレビューは ref と state の両方に持つ（ref は commit 時に参照、state は描画用）。
+  const applyPreview = (p: DragPreview | null) => {
+    previewRef.current = p;
+    setPreview(p);
+  };
 
   const track = song.tracks.find((t) => t.id === selectedTrackId) ?? song.tracks[0];
   const notes = track?.notes ?? [];
@@ -104,10 +120,28 @@ export function PianoRoll() {
   const width = totalBeats * BEAT_WIDTH;
   const height = pitchRows * ROW_HEIGHT;
 
-  // 背景クリックでノート追加（pen ツール時のみ）。
+  // 背景での pointerdown。
+  // - pen: ノート追加
+  // - select: パン開始（自前スクロール）。SVG は touch-action:none のため
+  //   タッチでも確実にドラッグでき、空白ドラッグでスクロールできる。
   const onBackgroundPointerDown = (e: ReactPointerEvent<SVGRectElement>) => {
     if (tool !== "pen") {
       selectNote(null);
+      const wrap = wrapRef.current;
+      if (wrap && !pan.current && !drag.current) {
+        pan.current = {
+          pointerId: e.pointerId,
+          startX: e.clientX,
+          startY: e.clientY,
+          startLeft: wrap.scrollLeft,
+          startTop: wrap.scrollTop,
+        };
+        try {
+          e.currentTarget.setPointerCapture(e.pointerId);
+        } catch {
+          // 無視
+        }
+      }
       return;
     }
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
@@ -125,7 +159,13 @@ export function PianoRoll() {
     // 既にドラッグ中なら 2 本目のポインタは無視（マルチタッチで掴みが奪われるのを防ぐ）。
     if (drag.current) return;
     selectNote(note.id);
-    e.currentTarget.setPointerCapture(e.pointerId);
+    // ポインタキャプチャは「あれば便利」程度。失敗してもドラッグ自体は
+    // window のリスナーで成立するため、例外でドラッグが始まらない事故を防ぐ。
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // 無視
+    }
     const { x, y } = clientToLocal(svgRef.current, e.clientX, e.clientY);
     drag.current = {
       mode,
@@ -137,7 +177,7 @@ export function PianoRoll() {
       origPitch: note.pitch,
       origDuration: note.duration,
     };
-    setPreview({
+    applyPreview({
       noteId: note.id,
       start: note.start,
       duration: note.duration,
@@ -184,20 +224,38 @@ export function PianoRoll() {
     };
 
     const onMove = (e: PointerEvent) => {
+      // パン（空白ドラッグでスクロール）。
+      const pn = pan.current;
+      if (pn && e.pointerId === pn.pointerId) {
+        const wrap = wrapRef.current;
+        if (wrap) {
+          wrap.scrollLeft = pn.startLeft - (e.clientX - pn.startX);
+          wrap.scrollTop = pn.startTop - (e.clientY - pn.startY);
+        }
+        return;
+      }
       if (!drag.current || e.pointerId !== drag.current.pointerId) return;
       const next = computePreview(e);
-      if (next) setPreview(next);
+      if (next) {
+        previewRef.current = next;
+        setPreview(next);
+      }
     };
     const onUp = (e: PointerEvent) => {
+      if (pan.current && e.pointerId === pan.current.pointerId) {
+        pan.current = null;
+        return;
+      }
       const d = drag.current;
       if (!d || e.pointerId !== d.pointerId) return;
-      setPreview((p) => {
-        if (p) {
-          updateNote(d.noteId, { start: p.start, duration: p.duration, pitch: p.pitch });
-        }
-        return null;
-      });
+      // commit は state updater の外で行う（副作用を updater に入れない）。
+      const p = previewRef.current;
+      if (p) {
+        updateNote(d.noteId, { start: p.start, duration: p.duration, pitch: p.pitch });
+      }
       drag.current = null;
+      previewRef.current = null;
+      setPreview(null);
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -323,25 +381,32 @@ export function PianoRoll() {
           </button>
         </div>
       </div>
+      <p className="hint">
+        {tool === "pen"
+          ? "ペン: タップでノート入力。移動/長さ変更は「選択」に切替。"
+          : "中央ドラッグ=移動 / 両端ドラッグ=長さ変更 / 空白ドラッグ=スクロール"}
+      </p>
       <div className="piano-roll-wrap" ref={wrapRef} style={{ maxHeight: 360 }}>
         <svg
           ref={svgRef}
           width={width}
           height={height}
-          style={{ display: "block" }}
+          // タッチでブラウザのスクロール/ジェスチャに奪われないよう none。
+          // スクロールは選択ツールでの空白ドラッグ（自前パン）で行う。
+          style={{ display: "block", touchAction: "none" }}
           role="img"
           aria-label="ピアノロール編集領域"
         >
           {rows}
           {subLines}
-          {/* 背景: pen 時のみノート追加。select 時は touch-action:auto でスクロールを許可。 */}
+          {/* 背景: pen=ノート追加 / select=空白ドラッグでパン。 */}
           <rect
             x={0}
             y={0}
             width={width}
             height={height}
             fill="transparent"
-            style={{ touchAction: tool === "pen" ? "none" : "auto" }}
+            style={{ cursor: tool === "pen" ? "crosshair" : "grab" }}
             onPointerDown={onBackgroundPointerDown}
           />
           {measureLines}
@@ -350,40 +415,89 @@ export function PianoRoll() {
             const x = e.start * BEAT_WIDTH;
             const w = Math.max(2, e.duration * BEAT_WIDTH - 1);
             const y = pitchToY(e.pitch);
+            const h = ROW_HEIGHT - 1;
             const selected = note.id === selectedNoteId;
-            // 短いノートでは左右ハンドルが重ならないよう幅を調整。
-            const handleW = Math.min(RESIZE_HANDLE, w / 3);
+            // タッチでも掴みやすいよう広めの当たり判定。見た目のグリップは細め。
+            const hitW = Math.min(TOUCH_HANDLE, w / 3);
+            const gripW = Math.min(4, w / 3);
+            const showGrips = w >= 14;
+            const showCenter = w >= 28;
             return (
               <g key={note.id}>
+                {/* 本体（移動）。 */}
                 <rect
+                  data-note-handle="move"
+                  data-note-id={note.id}
                   x={x}
                   y={y}
                   width={w}
-                  height={ROW_HEIGHT - 1}
+                  height={h}
                   rx={3}
                   fill={selected ? "var(--note-selected)" : "var(--note)"}
-                  stroke="#1118"
-                  style={{ cursor: "move", touchAction: "none" }}
+                  stroke={selected ? "#fff8" : "#1118"}
+                  style={{ cursor: "move" }}
                   onPointerDown={(ev) => beginDrag(ev, note, "move")}
                 />
-                {/* 左端ハンドル（開始位置＝長さ変更）。 */}
+                {/* 中央の移動グリップ（点々）。視覚のみ。 */}
+                {showCenter && (
+                  <g pointerEvents="none" fill="#ffffffcc">
+                    {[-3, 0, 3].map((dx) =>
+                      [-3, 3].map((dy) => (
+                        <circle
+                          key={`${dx}-${dy}`}
+                          cx={x + w / 2 + dx}
+                          cy={y + h / 2 + dy}
+                          r={0.9}
+                        />
+                      )),
+                    )}
+                  </g>
+                )}
+                {/* 左右の可視グリップ（リサイズできることを示す縦バー）。 */}
+                {showGrips && (
+                  <>
+                    <rect
+                      pointerEvents="none"
+                      x={x + 1.5}
+                      y={y + 2}
+                      width={gripW}
+                      height={h - 4}
+                      rx={1}
+                      fill="#ffffffcc"
+                    />
+                    <rect
+                      pointerEvents="none"
+                      x={x + w - gripW - 1.5}
+                      y={y + 2}
+                      width={gripW}
+                      height={h - 4}
+                      rx={1}
+                      fill="#ffffffcc"
+                    />
+                  </>
+                )}
+                {/* 左端の当たり判定（開始位置＝長さ変更）。 */}
                 <rect
+                  data-note-handle="left"
+                  data-note-id={note.id}
                   x={x}
                   y={y}
-                  width={handleW}
-                  height={ROW_HEIGHT - 1}
+                  width={hitW}
+                  height={h}
                   fill="transparent"
-                  style={{ cursor: "ew-resize", touchAction: "none" }}
+                  style={{ cursor: "ew-resize" }}
                   onPointerDown={(ev) => beginDrag(ev, note, "resize-left")}
                 />
-                {/* 右端ハンドル（長さ変更）。 */}
+                {/* 右端の当たり判定（長さ変更）。 */}
                 <rect
-                  x={x + w - handleW}
+                  data-note-handle="right"
+                  data-note-id={note.id}
+                  x={x + w - hitW}
                   y={y}
-                  width={handleW}
-                  height={ROW_HEIGHT - 1}
+                  width={hitW}
+                  height={h}
                   fill="transparent"
-                  style={{ cursor: "ew-resize", touchAction: "none" }}
+                  style={{ cursor: "ew-resize" }}
                   onPointerDown={(ev) => beginDrag(ev, note, "resize-right")}
                 />
               </g>
