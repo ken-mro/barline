@@ -87,4 +87,19 @@ describe("PianoRoll ドラッグ操作（結合）", () => {
     expect(n.start).toBeCloseTo(0.5);
     expect(n.start + n.duration).toBeCloseTo(2);
   });
+
+  it("pointercancel でドラッグが破棄され、その後の移動が誤適用されない", () => {
+    const { container } = render(<PianoRoll />);
+    const move = container.querySelector('[data-note-handle="move"]') as Element;
+    const s = center("move");
+    dispatchPointer(move, "pointerdown", s.x, s.y);
+    dispatchPointer(window, "pointermove", s.x + 2 * BEAT_WIDTH, s.y);
+    // ジェスチャが OS に奪われた場合（pointerup ではなく pointercancel）。
+    dispatchPointer(window, "pointercancel", s.x + 2 * BEAT_WIDTH, s.y);
+    // キャンセル時はプレビューを破棄するので元の位置のまま。
+    expect(getNote().start).toBeCloseTo(1);
+    // キャンセル後の余計な move でノートが動き続けない（固まらない）。
+    dispatchPointer(window, "pointermove", s.x + 5 * BEAT_WIDTH, s.y);
+    expect(getNote().start).toBeCloseTo(1);
+  });
 });

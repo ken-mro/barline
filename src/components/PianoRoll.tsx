@@ -1,5 +1,6 @@
 import {
   type PointerEvent as ReactPointerEvent,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -24,7 +25,7 @@ import { measureBeats } from "../utils/quantize";
  */
 
 const ROW_HEIGHT = 22;
-const BEAT_WIDTH = 40;
+const GUTTER_W = 40; // 左の音高ラベル固定ガター幅
 const PITCH_MAX = 84; // C6
 const PITCH_MIN = 48; // C3
 const MIN_BEATS = 16;
@@ -56,8 +57,8 @@ function snapTo(value: number, grid: number): number {
   return Math.max(0, Math.round(value / grid) * grid);
 }
 
-// 座標変換（定数のみに依存する純粋関数なので module スコープに置く）。
-const xToBeat = (x: number) => x / BEAT_WIDTH;
+// 縦方向の座標変換は定数のみに依存する純粋関数。横方向(拍↔px)はズーム
+// (pxPerBeat)に依存するためコンポーネント内で定義する。
 const yToPitch = (y: number) => PITCH_MAX - 1 - Math.floor(y / ROW_HEIGHT);
 const pitchToY = (pitch: number) => (PITCH_MAX - 1 - pitch) * ROW_HEIGHT;
 const clampPitch = (p: number) => Math.min(PITCH_MAX - 1, Math.max(PITCH_MIN, p));
@@ -82,9 +83,14 @@ export function PianoRoll() {
   const setStepCursor = useEditorStore((s) => s.setStepCursor);
   const tool = useEditorStore((s) => s.tool);
   const setTool = useEditorStore((s) => s.setTool);
+  const pxPerBeat = useEditorStore((s) => s.pxPerBeat);
+  const setPxPerBeat = useEditorStore((s) => s.setPxPerBeat);
   const isRecording = useEditorStore((s) => s.isRecording);
   const recordHeadBeats = useEditorStore((s) => s.recordHeadBeats);
   const liveNotes = useEditorStore((s) => s.liveNotes);
+
+  // 横方向の座標変換（ズーム連動）。pxPerBeat が変わったときだけ作り直す。
+  const xToBeat = useCallback((x: number) => x / pxPerBeat, [pxPerBeat]);
 
   const svgRef = useRef<SVGSVGElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -117,7 +123,7 @@ export function PianoRoll() {
   );
   const pitchRows = PITCH_MAX - PITCH_MIN;
 
-  const width = totalBeats * BEAT_WIDTH;
+  const width = totalBeats * pxPerBeat;
   const height = pitchRows * ROW_HEIGHT;
 
   // 背景での pointerdown。
@@ -257,13 +263,29 @@ export function PianoRoll() {
       previewRef.current = null;
       setPreview(null);
     };
+    // ジェスチャが OS/ブラウザに奪われた場合（context menu, 端スワイプ, 2 本目の
+    // タッチでのズーム等）は pointerup ではなく pointercancel が飛ぶ。これを拾わないと
+    // drag/pan/preview が確定されず固まったままになるため、変更を破棄してリセットする。
+    const onCancel = (e: PointerEvent) => {
+      if (pan.current && e.pointerId === pan.current.pointerId) {
+        pan.current = null;
+        return;
+      }
+      const d = drag.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      drag.current = null;
+      previewRef.current = null;
+      setPreview(null);
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
     };
-  }, [grid, updateNote]);
+  }, [grid, updateNote, xToBeat]);
 
   // 選択ノートの削除。
   useEffect(() => {
@@ -284,14 +306,15 @@ export function PianoRoll() {
     if (!isRecording && head === 0) return;
     const wrap = wrapRef.current;
     if (!wrap) return;
-    const x = head * BEAT_WIDTH;
+    // svg は左ガター分だけ右にずれているので GUTTER_W を加算する。
+    const x = GUTTER_W + head * pxPerBeat;
     const margin = 80;
     if (x > wrap.scrollLeft + wrap.clientWidth - margin) {
       wrap.scrollLeft = x - wrap.clientWidth + margin;
     } else if (x < wrap.scrollLeft + margin) {
       wrap.scrollLeft = Math.max(0, x - margin);
     }
-  }, [recordHeadBeats, playheadBeats, isRecording]);
+  }, [recordHeadBeats, playheadBeats, isRecording, pxPerBeat]);
 
   // 静的レイヤー（行・補助線・拍線）はドラッグ中に変わらないので memo 化する。
   const rows = useMemo(() => {
@@ -320,9 +343,9 @@ export function PianoRoll() {
         out.push(
           <line
             key={`sub-${b}`}
-            x1={b * BEAT_WIDTH}
+            x1={b * pxPerBeat}
             y1={0}
-            x2={b * BEAT_WIDTH}
+            x2={b * pxPerBeat}
             y2={height}
             stroke="#2c2c34"
             strokeWidth={1}
@@ -331,7 +354,7 @@ export function PianoRoll() {
       }
     }
     return out;
-  }, [grid, totalBeats, height]);
+  }, [grid, totalBeats, height, pxPerBeat]);
 
   const measureLines = useMemo(() => {
     const out = [];
@@ -340,9 +363,9 @@ export function PianoRoll() {
       out.push(
         <line
           key={`v-${b}`}
-          x1={b * BEAT_WIDTH}
+          x1={b * pxPerBeat}
           y1={0}
-          x2={b * BEAT_WIDTH}
+          x2={b * pxPerBeat}
           y2={height}
           stroke={isMeasure ? "#5b5b66" : "#3a3a44"}
           strokeWidth={isMeasure ? 1.5 : 1}
@@ -350,28 +373,51 @@ export function PianoRoll() {
       );
     }
     return out;
-  }, [totalBeats, mBeats, height]);
+  }, [totalBeats, mBeats, height, pxPerBeat]);
 
-  // シ(B)–ド(C) 間の横線（オクターブの区切り）。C の行の下端に引く。
+  // 横方向の区切り線。鍵盤と対応づけやすいよう半音間に線を引く:
+  // - シ(B)–ド(C): オクターブ区切り（明るく太め）。C 行の下端。
+  // - ミ(E)–ファ(F): 拍線と同じ控えめな線。F 行の下端。
   const octaveLines = useMemo(() => {
     const out = [];
     for (let p = PITCH_MIN; p <= PITCH_MAX; p++) {
-      if (((p % 12) + 12) % 12 !== 0) continue; // C のみ
+      const mod = ((p % 12) + 12) % 12;
+      const isC = mod === 0;
+      const isF = mod === 5;
+      if (!isC && !isF) continue;
       const yLine = pitchToY(p) + ROW_HEIGHT;
       out.push(
         <line
-          key={`oct-${p}`}
+          key={`hline-${p}`}
           x1={0}
           y1={yLine}
           x2={width}
           y2={yLine}
-          stroke="#8a8a98"
-          strokeWidth={1.5}
+          stroke={isC ? "#8a8a98" : "#3a3a44"}
+          strokeWidth={isC ? 1.5 : 1}
         />,
       );
     }
     return out;
   }, [width]);
+
+  // 左ガターの音高ラベル（各 C を明示。C3 / C4 …）。
+  const pitchLabels = useMemo(() => {
+    const out = [];
+    for (let p = PITCH_MIN; p < PITCH_MAX; p++) {
+      if (((p % 12) + 12) % 12 !== 0) continue; // C のみ
+      out.push(
+        <div
+          key={`label-${p}`}
+          className="pr-label"
+          style={{ top: pitchToY(p), height: ROW_HEIGHT }}
+        >
+          {`C${Math.floor(p / 12) - 1}`}
+        </div>,
+      );
+    }
+    return out;
+  }, []);
 
   // ドラッグ中はプレビュー値で描画する。
   const effective = (note: Note) =>
@@ -400,6 +446,27 @@ export function PianoRoll() {
           >
             ✏ ペン
           </button>
+          <button
+            type="button"
+            disabled={!selectedNoteId}
+            onClick={() => {
+              if (!selectedNoteId) return;
+              removeNote(selectedNoteId);
+              selectNote(null);
+            }}
+            title="選択中のノートを削除"
+          >
+            🗑 削除
+          </button>
+          <span className="label">横幅</span>
+          <input
+            type="range"
+            min={16}
+            max={96}
+            value={pxPerBeat}
+            onChange={(e) => setPxPerBeat(Number(e.target.value))}
+            aria-label="ピアノロールの横幅（ズーム）"
+          />
         </div>
       </div>
       <p className="hint">
@@ -408,161 +475,167 @@ export function PianoRoll() {
           : "中央ドラッグ=移動 / 両端ドラッグ=長さ変更 / 空白ドラッグ=スクロール"}
       </p>
       <div className="piano-roll-wrap" ref={wrapRef} style={{ maxHeight: 360 }}>
-        <svg
-          ref={svgRef}
-          width={width}
-          height={height}
-          // タッチでブラウザのスクロール/ジェスチャに奪われないよう none。
-          // スクロールは選択ツールでの空白ドラッグ（自前パン）で行う。
-          style={{ display: "block", touchAction: "none" }}
-          role="img"
-          aria-label="ピアノロール編集領域"
-        >
-          {rows}
-          {subLines}
-          {/* 背景: pen=ノート追加 / select=空白ドラッグでパン。 */}
-          <rect
-            x={0}
-            y={0}
+        <div className="pr-scroll" style={{ width: GUTTER_W + width }}>
+          {/* 左固定ガター: 音高ラベル。横スクロールで左に固定、縦は行に追従。 */}
+          <div className="pr-gutter" style={{ width: GUTTER_W, height }}>
+            {pitchLabels}
+          </div>
+          <svg
+            ref={svgRef}
             width={width}
             height={height}
-            fill="transparent"
-            style={{ cursor: tool === "pen" ? "crosshair" : "grab" }}
-            onPointerDown={onBackgroundPointerDown}
-          />
-          {measureLines}
-          {octaveLines}
-          {notes.map((note) => {
-            const e = effective(note);
-            const x = e.start * BEAT_WIDTH;
-            const w = Math.max(2, e.duration * BEAT_WIDTH - 1);
-            const y = pitchToY(e.pitch);
-            const h = ROW_HEIGHT - 1;
-            const selected = note.id === selectedNoteId;
-            // タッチでも掴みやすいよう広めの当たり判定。見た目のグリップは細め。
-            const hitW = Math.min(TOUCH_HANDLE, w / 3);
-            const gripW = Math.min(4, w / 3);
-            const showGrips = w >= 14;
-            const showCenter = w >= 28;
-            return (
-              <g key={note.id}>
-                {/* 本体（移動）。 */}
+            // タッチでブラウザのスクロール/ジェスチャに奪われないよう none。
+            // スクロールは選択ツールでの空白ドラッグ（自前パン）で行う。
+            style={{ display: "block", touchAction: "none" }}
+            role="img"
+            aria-label="ピアノロール編集領域"
+          >
+            {rows}
+            {subLines}
+            {/* 背景: pen=ノート追加 / select=空白ドラッグでパン。 */}
+            <rect
+              x={0}
+              y={0}
+              width={width}
+              height={height}
+              fill="transparent"
+              style={{ cursor: tool === "pen" ? "crosshair" : "grab" }}
+              onPointerDown={onBackgroundPointerDown}
+            />
+            {measureLines}
+            {octaveLines}
+            {notes.map((note) => {
+              const e = effective(note);
+              const x = e.start * pxPerBeat;
+              const w = Math.max(2, e.duration * pxPerBeat - 1);
+              const y = pitchToY(e.pitch);
+              const h = ROW_HEIGHT - 1;
+              const selected = note.id === selectedNoteId;
+              // タッチでも掴みやすいよう広めの当たり判定。見た目のグリップは細め。
+              const hitW = Math.min(TOUCH_HANDLE, w / 3);
+              const gripW = Math.min(4, w / 3);
+              const showGrips = w >= 14;
+              const showCenter = w >= 28;
+              return (
+                <g key={note.id}>
+                  {/* 本体（移動）。 */}
+                  <rect
+                    data-note-handle="move"
+                    data-note-id={note.id}
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    rx={3}
+                    fill={selected ? "var(--note-selected)" : "var(--note)"}
+                    stroke={selected ? "#fff8" : "#1118"}
+                    style={{ cursor: "move" }}
+                    onPointerDown={(ev) => beginDrag(ev, note, "move")}
+                  />
+                  {/* 中央の移動グリップ（点々）。視覚のみ。 */}
+                  {showCenter && (
+                    <g pointerEvents="none" fill="#ffffffcc">
+                      {[-3, 0, 3].map((dx) =>
+                        [-3, 3].map((dy) => (
+                          <circle
+                            key={`${dx}-${dy}`}
+                            cx={x + w / 2 + dx}
+                            cy={y + h / 2 + dy}
+                            r={0.9}
+                          />
+                        )),
+                      )}
+                    </g>
+                  )}
+                  {/* 左右の可視グリップ（リサイズできることを示す縦バー）。 */}
+                  {showGrips && (
+                    <>
+                      <rect
+                        pointerEvents="none"
+                        x={x + 1.5}
+                        y={y + 2}
+                        width={gripW}
+                        height={h - 4}
+                        rx={1}
+                        fill="#ffffffcc"
+                      />
+                      <rect
+                        pointerEvents="none"
+                        x={x + w - gripW - 1.5}
+                        y={y + 2}
+                        width={gripW}
+                        height={h - 4}
+                        rx={1}
+                        fill="#ffffffcc"
+                      />
+                    </>
+                  )}
+                  {/* 左端の当たり判定（開始位置＝長さ変更）。 */}
+                  <rect
+                    data-note-handle="left"
+                    data-note-id={note.id}
+                    x={x}
+                    y={y}
+                    width={hitW}
+                    height={h}
+                    fill="transparent"
+                    style={{ cursor: "ew-resize" }}
+                    onPointerDown={(ev) => beginDrag(ev, note, "resize-left")}
+                  />
+                  {/* 右端の当たり判定（長さ変更）。 */}
+                  <rect
+                    data-note-handle="right"
+                    data-note-id={note.id}
+                    x={x + w - hitW}
+                    y={y}
+                    width={hitW}
+                    height={h}
+                    fill="transparent"
+                    style={{ cursor: "ew-resize" }}
+                    onPointerDown={(ev) => beginDrag(ev, note, "resize-right")}
+                  />
+                </g>
+              );
+            })}
+            {/* 録音中のライブノート（押下中。録音ヘッドまで伸びる）。 */}
+            {isRecording &&
+              liveNotes.map((ln) => (
                 <rect
-                  data-note-handle="move"
-                  data-note-id={note.id}
-                  x={x}
-                  y={y}
-                  width={w}
-                  height={h}
+                  key={`live-${ln.pitch}-${ln.startBeat}`}
+                  x={ln.startBeat * pxPerBeat}
+                  y={pitchToY(ln.pitch)}
+                  width={Math.max(2, (recordHeadBeats - ln.startBeat) * pxPerBeat)}
+                  height={ROW_HEIGHT - 1}
                   rx={3}
-                  fill={selected ? "var(--note-selected)" : "var(--note)"}
-                  stroke={selected ? "#fff8" : "#1118"}
-                  style={{ cursor: "move" }}
-                  onPointerDown={(ev) => beginDrag(ev, note, "move")}
+                  fill="var(--record)"
+                  opacity={0.7}
+                  pointerEvents="none"
                 />
-                {/* 中央の移動グリップ（点々）。視覚のみ。 */}
-                {showCenter && (
-                  <g pointerEvents="none" fill="#ffffffcc">
-                    {[-3, 0, 3].map((dx) =>
-                      [-3, 3].map((dy) => (
-                        <circle
-                          key={`${dx}-${dy}`}
-                          cx={x + w / 2 + dx}
-                          cy={y + h / 2 + dy}
-                          r={0.9}
-                        />
-                      )),
-                    )}
-                  </g>
-                )}
-                {/* 左右の可視グリップ（リサイズできることを示す縦バー）。 */}
-                {showGrips && (
-                  <>
-                    <rect
-                      pointerEvents="none"
-                      x={x + 1.5}
-                      y={y + 2}
-                      width={gripW}
-                      height={h - 4}
-                      rx={1}
-                      fill="#ffffffcc"
-                    />
-                    <rect
-                      pointerEvents="none"
-                      x={x + w - gripW - 1.5}
-                      y={y + 2}
-                      width={gripW}
-                      height={h - 4}
-                      rx={1}
-                      fill="#ffffffcc"
-                    />
-                  </>
-                )}
-                {/* 左端の当たり判定（開始位置＝長さ変更）。 */}
-                <rect
-                  data-note-handle="left"
-                  data-note-id={note.id}
-                  x={x}
-                  y={y}
-                  width={hitW}
-                  height={h}
-                  fill="transparent"
-                  style={{ cursor: "ew-resize" }}
-                  onPointerDown={(ev) => beginDrag(ev, note, "resize-left")}
-                />
-                {/* 右端の当たり判定（長さ変更）。 */}
-                <rect
-                  data-note-handle="right"
-                  data-note-id={note.id}
-                  x={x + w - hitW}
-                  y={y}
-                  width={hitW}
-                  height={h}
-                  fill="transparent"
-                  style={{ cursor: "ew-resize" }}
-                  onPointerDown={(ev) => beginDrag(ev, note, "resize-right")}
-                />
-              </g>
-            );
-          })}
-          {/* 録音中のライブノート（押下中。録音ヘッドまで伸びる）。 */}
-          {isRecording &&
-            liveNotes.map((ln) => (
-              <rect
-                key={`live-${ln.pitch}`}
-                x={ln.startBeat * BEAT_WIDTH}
-                y={pitchToY(ln.pitch)}
-                width={Math.max(2, (recordHeadBeats - ln.startBeat) * BEAT_WIDTH)}
-                height={ROW_HEIGHT - 1}
-                rx={3}
-                fill="var(--record)"
-                opacity={0.7}
-                pointerEvents="none"
-              />
-            ))}
-          {/* 再生ヘッド。 */}
-          <line
-            x1={playheadBeats * BEAT_WIDTH}
-            y1={0}
-            x2={playheadBeats * BEAT_WIDTH}
-            y2={height}
-            stroke="var(--playhead)"
-            strokeWidth={2}
-            pointerEvents="none"
-          />
-          {/* 録音ヘッド。 */}
-          {isRecording && (
+              ))}
+            {/* 再生ヘッド。 */}
             <line
-              x1={recordHeadBeats * BEAT_WIDTH}
+              x1={playheadBeats * pxPerBeat}
               y1={0}
-              x2={recordHeadBeats * BEAT_WIDTH}
+              x2={playheadBeats * pxPerBeat}
               y2={height}
-              stroke="var(--record)"
+              stroke="var(--playhead)"
               strokeWidth={2}
               pointerEvents="none"
             />
-          )}
-        </svg>
+            {/* 録音ヘッド。 */}
+            {isRecording && (
+              <line
+                x1={recordHeadBeats * pxPerBeat}
+                y1={0}
+                x2={recordHeadBeats * pxPerBeat}
+                y2={height}
+                stroke="var(--record)"
+                strokeWidth={2}
+                pointerEvents="none"
+              />
+            )}
+          </svg>
+        </div>
       </div>
     </div>
   );
