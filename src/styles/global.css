@@ -172,12 +172,47 @@ input[type="number"] {
   flex: 1;
 }
 
+/* パネルヘッダ内の操作グループ（小画面では折り返す） */
+.panel-head .group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
 /* ピアノロール */
 .piano-roll-wrap {
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-2);
+}
+/* svg と左ガターを横並びにするスクロール内容。 */
+.pr-scroll {
+  display: flex;
+  align-items: flex-start;
+}
+/* 音高ラベルの固定左ガター（frozen column）。 */
+.pr-gutter {
+  position: sticky;
+  left: 0;
+  flex: 0 0 auto;
+  z-index: 5;
+  background: var(--panel-2);
+  border-right: 1px solid var(--border);
+}
+.pr-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
 
 /* 鍵盤 */

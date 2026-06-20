@@ -119,7 +119,8 @@ export function Keyboard() {
                 justifyContent: "center",
                 paddingBottom: 4,
                 fontSize: 10,
-                touchAction: "none",
+                // 横スワイプで鍵盤をスクロール、タップ/ホールドで発音。
+                touchAction: "pan-x",
               }}
             >
               {pitch % 12 === 0 ? pitchLabel(pitch) : ""}
@@ -143,7 +144,7 @@ export function Keyboard() {
                 border: "1px solid #000",
                 borderRadius: "0 0 4px 4px",
                 zIndex: 2,
-                touchAction: "none",
+                touchAction: "pan-x",
               }}
             />
           ))}

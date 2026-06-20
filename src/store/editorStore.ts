@@ -32,6 +32,8 @@ interface EditorState {
   // --- ピアノロール ---
   /** 操作ツール（select=移動/スクロール、pen=入力）。 */
   tool: Tool;
+  /** 1 拍あたりの横幅(px)。横方向ズーム。 */
+  pxPerBeat: number;
 
   // --- 鍵盤 ---
   /** 白鍵 1 つの横幅(px)。 */
@@ -60,6 +62,7 @@ interface EditorState {
   setGrid: (g: number) => void;
   selectNote: (id: string | null) => void;
   setTool: (t: Tool) => void;
+  setPxPerBeat: (w: number) => void;
   setKeyWidth: (w: number) => void;
   setIsRecording: (v: boolean) => void;
   setCountdown: (v: number | null) => void;
@@ -75,9 +78,10 @@ export const useEditorStore = create<EditorState>((set) => ({
   playheadBeats: 0,
   stepCursor: 0,
   noteDuration: 1,
-  grid: 0.25,
+  grid: 1,
   selectedNoteId: null,
   tool: "select",
+  pxPerBeat: 40,
   keyWidth: 34,
   isRecording: false,
   countdown: null,
@@ -94,6 +98,7 @@ export const useEditorStore = create<EditorState>((set) => ({
   setGrid: (g) => set({ grid: g }),
   selectNote: (id) => set({ selectedNoteId: id }),
   setTool: (t) => set({ tool: t }),
+  setPxPerBeat: (w) => set({ pxPerBeat: Math.max(16, Math.min(96, w)) }),
   setKeyWidth: (w) => set({ keyWidth: Math.max(20, Math.min(60, w)) }),
   setIsRecording: (v) => set({ isRecording: v }),
   setCountdown: (v) => set({ countdown: v }),

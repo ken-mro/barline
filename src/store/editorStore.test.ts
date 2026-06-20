@@ -23,6 +23,16 @@ describe("editorStore", () => {
     expect(useEditorStore.getState().keyWidth).toBe(40);
   });
 
+  it("setPxPerBeat は 16–96 にクランプする", () => {
+    const { setPxPerBeat } = useEditorStore.getState();
+    setPxPerBeat(1);
+    expect(useEditorStore.getState().pxPerBeat).toBe(16);
+    setPxPerBeat(999);
+    expect(useEditorStore.getState().pxPerBeat).toBe(96);
+    setPxPerBeat(48);
+    expect(useEditorStore.getState().pxPerBeat).toBe(48);
+  });
+
   it("録音状態とライブノートを更新できる", () => {
     const s = useEditorStore.getState();
     s.setIsRecording(true);
