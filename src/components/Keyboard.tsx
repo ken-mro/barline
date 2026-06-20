@@ -78,6 +78,9 @@ export function Keyboard() {
   };
 
   const totalWidth = whiteKeys.length * whiteWidth;
+  // 録音中は指が少し横に動いてもブラウザのパンに奪われて発音が途切れないよう none。
+  // 非録音時は横スワイプで鍵盤をスクロールできるよう pan-x。
+  const keyTouchAction = isRecording ? "none" : "pan-x";
 
   return (
     <div className="panel" id="barline-keyboard">
@@ -120,7 +123,7 @@ export function Keyboard() {
                 paddingBottom: 4,
                 fontSize: 10,
                 // 横スワイプで鍵盤をスクロール、タップ/ホールドで発音。
-                touchAction: "pan-x",
+                touchAction: keyTouchAction,
               }}
             >
               {pitch % 12 === 0 ? pitchLabel(pitch) : ""}
@@ -144,7 +147,7 @@ export function Keyboard() {
                 border: "1px solid #000",
                 borderRadius: "0 0 4px 4px",
                 zIndex: 2,
-                touchAction: "pan-x",
+                touchAction: keyTouchAction,
               }}
             />
           ))}

@@ -263,11 +263,27 @@ export function PianoRoll() {
       previewRef.current = null;
       setPreview(null);
     };
+    // ジェスチャが OS/ブラウザに奪われた場合（context menu, 端スワイプ, 2 本目の
+    // タッチでのズーム等）は pointerup ではなく pointercancel が飛ぶ。これを拾わないと
+    // drag/pan/preview が確定されず固まったままになるため、変更を破棄してリセットする。
+    const onCancel = (e: PointerEvent) => {
+      if (pan.current && e.pointerId === pan.current.pointerId) {
+        pan.current = null;
+        return;
+      }
+      const d = drag.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      drag.current = null;
+      previewRef.current = null;
+      setPreview(null);
+    };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
     return () => {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
     };
   }, [grid, updateNote, xToBeat]);
 
@@ -585,7 +601,7 @@ export function PianoRoll() {
             {isRecording &&
               liveNotes.map((ln) => (
                 <rect
-                  key={`live-${ln.pitch}`}
+                  key={`live-${ln.pitch}-${ln.startBeat}`}
                   x={ln.startBeat * pxPerBeat}
                   y={pitchToY(ln.pitch)}
                   width={Math.max(2, (recordHeadBeats - ln.startBeat) * pxPerBeat)}
